@@ -73,7 +73,7 @@ export default function CheckoutReview() {
       };
 
       if (draft.paymentMethod === 'online') {
-        const { data } = await api.post('/payments/stripe/checkout-session', payload);
+        const { data } = await api.post('/payments/gateway/checkout-session', payload);
         window.location.href = data.url;
         return;
       }

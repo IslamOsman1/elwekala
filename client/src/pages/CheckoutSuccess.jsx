@@ -17,12 +17,21 @@ export default function CheckoutSuccess() {
 
   useEffect(() => {
     const sessionId = searchParams.get('session_id');
-    if (!sessionId) {
+    const gatewayRef = searchParams.get('gateway_ref');
+    const provider = searchParams.get('provider') || '';
+    const payload = searchParams.get('payload') || '';
+    const reference = gatewayRef || sessionId;
+
+    if (!reference) {
       setLoading(false);
       return;
     }
 
-    api.get(`/payments/stripe/verify/${sessionId}`)
+    const query = new URLSearchParams();
+    if (provider) query.set('provider', provider);
+    if (payload) query.set('payload', payload);
+
+    api.get(`/payments/gateway/verify/${reference}${query.toString() ? `?${query.toString()}` : ''}`)
       .then(({ data }) => {
         setPaid(Boolean(data.paid));
         setOrder(data.order);

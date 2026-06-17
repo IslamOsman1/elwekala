@@ -123,6 +123,12 @@ const defaultSettingsForm = {
     onlinePaymentEnabled: false,
     onlineProvider: 'stripe',
     currency: 'egp',
+    gatewayMerchantId: '',
+    gatewayApiUsername: '',
+    gatewayApiPassword: '',
+    gatewayBaseUrl: '',
+    gatewayIntegrationMode: 'hosted_checkout',
+    gatewayWebhookSecret: '',
     stripePublishableKey: '',
     stripeSecretKey: ''
   },
@@ -2328,9 +2334,15 @@ export default function AdminDashboard() {
                 <div className="admin-setting-card-head"><CreditCard size={18} /><strong>إعدادات الدفع</strong></div>
                 <div className="admin-dashboard-form-grid">
                   <Field label="العملة"><input value={settingsForm.payment.currency} onChange={(event) => changeSettingsField(['payment', 'currency'], event.target.value)} placeholder="egp" /></Field>
-                  <Field label="مزود الدفع"><input value={settingsForm.payment.onlineProvider} onChange={(event) => changeSettingsField(['payment', 'onlineProvider'], event.target.value)} placeholder="stripe" /></Field>
-                  <Field label="Stripe Publishable Key"><input value={settingsForm.payment.stripePublishableKey} onChange={(event) => changeSettingsField(['payment', 'stripePublishableKey'], event.target.value)} /></Field>
-                  <Field label="Stripe Secret Key"><input value={settingsForm.payment.stripeSecretKey} onChange={(event) => changeSettingsField(['payment', 'stripeSecretKey'], event.target.value)} /></Field>
+                  <Field label="مزود الدفع"><input value={settingsForm.payment.onlineProvider} onChange={(event) => changeSettingsField(['payment', 'onlineProvider'], event.target.value)} placeholder="fabmisr-mpgs أو stripe" /></Field>
+                  <Field label="Gateway Merchant ID"><input value={settingsForm.payment.gatewayMerchantId || ''} onChange={(event) => changeSettingsField(['payment', 'gatewayMerchantId'], event.target.value)} /></Field>
+                  <Field label="Gateway API Username"><input value={settingsForm.payment.gatewayApiUsername || ''} onChange={(event) => changeSettingsField(['payment', 'gatewayApiUsername'], event.target.value)} /></Field>
+                  <Field label="Gateway API Password"><input value={settingsForm.payment.gatewayApiPassword || ''} onChange={(event) => changeSettingsField(['payment', 'gatewayApiPassword'], event.target.value)} /></Field>
+                  <Field label="Gateway Base URL"><input value={settingsForm.payment.gatewayBaseUrl || ''} onChange={(event) => changeSettingsField(['payment', 'gatewayBaseUrl'], event.target.value)} placeholder="https://cibpaynow.gateway.mastercard.com" /></Field>
+                  <Field label="Gateway Mode"><input value={settingsForm.payment.gatewayIntegrationMode || ''} onChange={(event) => changeSettingsField(['payment', 'gatewayIntegrationMode'], event.target.value)} placeholder="hosted_checkout" /></Field>
+                  <Field label="Gateway Webhook Secret"><input value={settingsForm.payment.gatewayWebhookSecret || ''} onChange={(event) => changeSettingsField(['payment', 'gatewayWebhookSecret'], event.target.value)} /></Field>
+                  <Field label="Stripe Publishable Key (Fallback)"><input value={settingsForm.payment.stripePublishableKey} onChange={(event) => changeSettingsField(['payment', 'stripePublishableKey'], event.target.value)} /></Field>
+                  <Field label="Stripe Secret Key (Fallback)"><input value={settingsForm.payment.stripeSecretKey} onChange={(event) => changeSettingsField(['payment', 'stripeSecretKey'], event.target.value)} /></Field>
                 </div>
                 <div className="admin-toggle-row">
                   <label className="admin-toggle-pill"><input type="checkbox" checked={settingsForm.payment.cashOnDeliveryEnabled} onChange={(event) => changeSettingsField(['payment', 'cashOnDeliveryEnabled'], event.target.checked)} /> تفعيل الدفع عند الاستلام</label>

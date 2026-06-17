@@ -7,6 +7,10 @@ import { sendCustomerOrderWhatsAppNotification, sendNewOrderWhatsAppNotification
 import { ensureStoreSettings } from '../utils/storeSettings.js';
 import { calculateOrderPricing, incrementDiscountCodeUsage } from '../utils/pricing.js';
 
+const normalizeProvider = (provider = '') => String(provider || '').trim().toLowerCase();
+
+const resolveClientUrl = (req) => process.env.CLIENT_URL || req.headers.origin || 'http://localhost:5173';
+
 const getStripeClient = async () => {
   const settings = await ensureStoreSettings();
   const secretKey = settings.payment?.stripeSecretKey || process.env.STRIPE_SECRET_KEY;
@@ -27,6 +31,19 @@ const getStripeClient = async () => {
     stripe: new Stripe(secretKey),
     settings
   };
+};
+
+const getGatewaySettings = async () => {
+  const settings = await ensureStoreSettings();
+  const paymentSettings = settings.payment || {};
+
+  if (!paymentSettings.onlinePaymentEnabled) {
+    const error = new Error('الدفع الأونلاين غير مفعل حاليًا');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return { settings, paymentSettings };
 };
 
 const buildOrderItems = async (orderItems) => {
@@ -66,52 +83,31 @@ const consumeLoyaltyPoints = async (userId, order, usedPoints) => {
   await user.save();
 };
 
-export const createStripeCheckoutSession = asyncHandler(async (req, res) => {
-  const { orderItems, shippingAddress, discountCode, redeemLoyaltyPoints } = req.body;
-  if (!orderItems?.length) {
-    return res.status(400).json({ message: 'السلة فارغة' });
-  }
+const buildCheckoutPayload = ({
+  req,
+  shippingAddress,
+  items,
+  pricing,
+  settings
+}) => JSON.stringify({
+  userId: req.user._id.toString(),
+  clientUrl: resolveClientUrl(req),
+  shippingAddress,
+  items,
+  discountCode: pricing.discountCode,
+  discountCodeSource: pricing.discountCodeSource,
+  discountCodeAmount: pricing.discountCodeAmount,
+  loyaltyPointsUsed: pricing.loyaltyPointsUsed,
+  loyaltyPointsDiscount: pricing.loyaltyPointsDiscount,
+  itemsPrice: pricing.itemsPrice,
+  shippingPrice: pricing.shippingPrice,
+  totalPrice: pricing.totalPrice,
+  provider: normalizeProvider(settings.payment?.onlineProvider || 'stripe')
+});
 
-  const items = await buildOrderItems(orderItems);
-  const { stripe, settings } = await getStripeClient();
-  const pricing = await calculateOrderPricing({
-    settings,
-    items,
-    shippingAddress,
-    discountCode,
-    redeemLoyaltyPoints,
-    user: req.user
-  });
-  if (pricing.totalPrice <= 0) {
-    return res.status(400).json({ message: 'إجمالي الطلب بعد الخصومات يساوي صفرًا، اختر الدفع عند الاستلام لإتمام الطلب' });
-  }
-  const origin = process.env.CLIENT_URL || req.headers.origin || 'http://localhost:5173';
-
-  const payload = JSON.stringify({
-    userId: req.user._id.toString(),
-    clientUrl: origin,
-    shippingAddress,
-    items,
-    discountCode: pricing.discountCode,
-    discountCodeSource: pricing.discountCodeSource,
-    discountCodeAmount: pricing.discountCodeAmount,
-    loyaltyPointsUsed: pricing.loyaltyPointsUsed,
-    loyaltyPointsDiscount: pricing.loyaltyPointsDiscount,
-    itemsPrice: pricing.itemsPrice,
-    shippingPrice: pricing.shippingPrice,
-    totalPrice: pricing.totalPrice
-  });
-
-  const chargeableItems = [{
-    quantity: 1,
-    price_data: {
-      currency: settings.payment?.currency || 'egp',
-      unit_amount: Math.round(pricing.totalPrice * 100),
-      product_data: {
-        name: 'إجمالي الطلب بعد الخصومات'
-      }
-    }
-  }];
+const createStripeCheckout = async ({ req, pricing, settings, payload }) => {
+  const { stripe } = await getStripeClient();
+  const origin = resolveClientUrl(req);
 
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',
@@ -121,135 +117,259 @@ export const createStripeCheckoutSession = asyncHandler(async (req, res) => {
     metadata: {
       checkoutPayload: payload
     },
-    line_items: chargeableItems
+    line_items: [{
+      quantity: 1,
+      price_data: {
+        currency: settings.payment?.currency || 'egp',
+        unit_amount: Math.round(pricing.totalPrice * 100),
+        product_data: {
+          name: 'إجمالي الطلب بعد الخصومات'
+        }
+      }
+    }]
   });
 
-  res.json({ url: session.url, sessionId: session.id });
-});
+  return {
+    url: session.url,
+    sessionId: session.id,
+    provider: 'stripe'
+  };
+};
 
-export const verifyStripeCheckoutSession = asyncHandler(async (req, res) => {
-  const { sessionId } = req.params;
-  const { stripe, settings } = await getStripeClient();
-  const session = await stripe.checkout.sessions.retrieve(sessionId);
+const createHostedGatewayCheckout = async ({ req, pricing, settings, payload }) => {
+  const paymentSettings = settings.payment || {};
 
-  if (session.payment_status !== 'paid') {
-    return res.json({ paid: false, order: null });
+  if (!paymentSettings.gatewayMerchantId || !paymentSettings.gatewayApiUsername || !paymentSettings.gatewayApiPassword || !paymentSettings.gatewayBaseUrl) {
+    const error = new Error('تم اختيار بوابة البنك لكن بيانات الربط غير مكتملة بعد في إعدادات الدفع');
+    error.statusCode = 400;
+    throw error;
   }
 
-  let order = await Order.findOne({ paymentSessionId: session.id });
+  const reference = `gw_${Date.now()}`;
+  const encodedPayload = Buffer.from(payload, 'utf8').toString('base64url');
+  const successUrl = `${resolveClientUrl(req)}/checkout/success?gateway_ref=${encodeURIComponent(reference)}&provider=${encodeURIComponent(normalizeProvider(paymentSettings.onlineProvider))}&payload=${encodeURIComponent(encodedPayload)}`;
 
-  if (!order) {
-    const rawPayload = session.metadata?.checkoutPayload;
-    if (!rawPayload) {
-      return res.status(400).json({ message: 'بيانات الطلب غير موجودة داخل جلسة الدفع' });
+  return {
+    url: successUrl,
+    sessionId: reference,
+    provider: normalizeProvider(paymentSettings.onlineProvider),
+    integrationMode: paymentSettings.gatewayIntegrationMode || 'hosted_checkout',
+    pendingGatewaySetup: true
+  };
+};
+
+const notifyOrderCreation = async ({ order, user, shippingAddress, clientUrl }) => {
+  console.log('WhatsApp hook reached for gateway payment verification', {
+    orderId: String(order._id || ''),
+    customerId: String(user?._id || ''),
+    paymentMethod: order.paymentMethod
+  });
+
+  const adminWhatsAppResult = await sendNewOrderWhatsAppNotification({
+    order,
+    customer: user,
+    shippingAddress
+  }).catch((error) => {
+    console.error('WhatsApp notification error', {
+      orderId: String(order._id || ''),
+      message: error.message
+    });
+    return { sent: false, reason: 'threw', message: error.message };
+  });
+
+  console.log('WhatsApp admin notification attempt finished', {
+    orderId: String(order._id || ''),
+    result: JSON.stringify(adminWhatsAppResult, null, 2)
+  });
+
+  const customerWhatsAppResult = await sendCustomerOrderWhatsAppNotification({
+    order,
+    customer: user,
+    shippingAddress,
+    clientUrl
+  }).catch((error) => {
+    console.error('WhatsApp customer notification error', {
+      orderId: String(order._id || ''),
+      message: error.message
+    });
+    return { sent: false, reason: 'threw', message: error.message };
+  });
+
+  console.log('WhatsApp customer notification attempt finished', {
+    orderId: String(order._id || ''),
+    result: JSON.stringify(customerWhatsAppResult, null, 2)
+  });
+};
+
+const finalizePaidOrder = async ({ payload, paymentSessionId, paymentReference, settings, req }) => {
+  const refreshedItems = await buildOrderItems(
+    payload.items.map((item) => ({
+      product: item.product.toString(),
+      qty: item.qty
+    }))
+  );
+
+  const order = await Order.create({
+    user: payload.userId,
+    orderItems: refreshedItems,
+    shippingAddress: payload.shippingAddress,
+    paymentMethod: 'دفع أونلاين',
+    paymentProvider: settings.payment?.onlineProvider || 'stripe',
+    paymentSessionId,
+    paymentReference,
+    itemsPrice: payload.itemsPrice,
+    shippingPrice: payload.shippingPrice,
+    discountCode: payload.discountCode,
+    discountCodeAmount: payload.discountCodeAmount,
+    loyaltyPointsUsed: payload.loyaltyPointsUsed,
+    loyaltyPointsDiscount: payload.loyaltyPointsDiscount,
+    totalPrice: payload.totalPrice,
+    isPaid: true,
+    paidAt: new Date()
+  });
+
+  for (const item of refreshedItems) {
+    await Product.updateOne({ _id: item.product }, { $inc: { countInStock: -item.qty } });
+  }
+
+  await consumeLoyaltyPoints(payload.userId, order, payload.loyaltyPointsUsed);
+
+  if (payload.discountCode) {
+    const freshUser = payload.discountCodeSource === 'private' ? await User.findById(payload.userId) : null;
+    await incrementDiscountCodeUsage({
+      settings,
+      user: freshUser,
+      code: payload.discountCode,
+      source: payload.discountCodeSource
+    });
+  }
+
+  const customer = await User.findById(payload.userId).select('name phone email');
+  await notifyOrderCreation({
+    order,
+    user: customer,
+    shippingAddress: payload.shippingAddress,
+    clientUrl: payload.clientUrl || resolveClientUrl(req)
+  });
+
+  return order;
+};
+
+export const createGatewayCheckoutSession = asyncHandler(async (req, res) => {
+  const { orderItems, shippingAddress, discountCode, redeemLoyaltyPoints } = req.body;
+  if (!orderItems?.length) {
+    return res.status(400).json({ message: 'السلة فارغة' });
+  }
+
+  const items = await buildOrderItems(orderItems);
+  const { settings, paymentSettings } = await getGatewaySettings();
+  const pricing = await calculateOrderPricing({
+    settings,
+    items,
+    shippingAddress,
+    discountCode,
+    redeemLoyaltyPoints,
+    user: req.user
+  });
+
+  if (pricing.totalPrice <= 0) {
+    return res.status(400).json({ message: 'إجمالي الطلب بعد الخصومات يساوي صفرًا، اختر الدفع عند الاستلام لإتمام الطلب' });
+  }
+
+  const payload = buildCheckoutPayload({ req, shippingAddress, items, pricing, settings });
+  const provider = normalizeProvider(paymentSettings.onlineProvider || 'stripe');
+
+  const session = provider === 'stripe'
+    ? await createStripeCheckout({ req, pricing, settings, payload })
+    : await createHostedGatewayCheckout({ req, pricing, settings, payload });
+
+  res.json(session);
+});
+
+export const verifyGatewayCheckoutSession = asyncHandler(async (req, res) => {
+  const reference = req.params.reference || req.params.sessionId;
+  const providerParam = normalizeProvider(req.query.provider || '');
+  const { settings, paymentSettings } = await getGatewaySettings();
+  const provider = providerParam || normalizeProvider(paymentSettings.onlineProvider || 'stripe');
+
+  if (provider === 'stripe') {
+    const { stripe } = await getStripeClient();
+    const session = await stripe.checkout.sessions.retrieve(reference);
+
+    if (session.payment_status !== 'paid') {
+      return res.json({ paid: false, order: null });
     }
 
-    const payload = JSON.parse(rawPayload);
-    const isOwner = payload.userId === req.user._id.toString();
+    let order = await Order.findOne({ paymentSessionId: session.id });
 
+    if (!order) {
+      const rawPayload = session.metadata?.checkoutPayload;
+      if (!rawPayload) {
+        return res.status(400).json({ message: 'بيانات الطلب غير موجودة داخل جلسة الدفع' });
+      }
+
+      const payload = JSON.parse(rawPayload);
+      const isOwner = payload.userId === req.user._id.toString();
+
+      if (!isOwner && req.user.role !== 'admin') {
+        return res.status(403).json({ message: 'غير مصرح بهذه العملية' });
+      }
+
+      order = await finalizePaidOrder({
+        payload,
+        paymentSessionId: session.id,
+        paymentReference: session.payment_intent?.toString() || session.id,
+        settings,
+        req
+      });
+    }
+
+    const isOwner = order.user?.toString() === req.user._id.toString();
     if (!isOwner && req.user.role !== 'admin') {
       return res.status(403).json({ message: 'غير مصرح بهذه العملية' });
     }
 
-    const refreshedItems = await buildOrderItems(
-      payload.items.map((item) => ({
-        product: item.product.toString(),
-        qty: item.qty
-      }))
-    );
-
-    order = await Order.create({
-      user: payload.userId,
-      orderItems: refreshedItems,
-      shippingAddress: payload.shippingAddress,
-      paymentMethod: 'دفع أونلاين',
-      paymentProvider: settings.payment?.onlineProvider || 'stripe',
-      paymentSessionId: session.id,
-      paymentReference: session.payment_intent?.toString() || session.id,
-      itemsPrice: payload.itemsPrice,
-      shippingPrice: payload.shippingPrice,
-      discountCode: payload.discountCode,
-      discountCodeAmount: payload.discountCodeAmount,
-      loyaltyPointsUsed: payload.loyaltyPointsUsed,
-      loyaltyPointsDiscount: payload.loyaltyPointsDiscount,
-      totalPrice: payload.totalPrice,
-      isPaid: true,
-      paidAt: new Date()
-    });
-
-    for (const item of refreshedItems) {
-      await Product.updateOne({ _id: item.product }, { $inc: { countInStock: -item.qty } });
+    if (!order.isPaid) {
+      order.isPaid = true;
+      order.paidAt = order.paidAt || new Date();
+      order.paymentProvider = settings.payment?.onlineProvider || 'stripe';
+      order.paymentSessionId = session.id;
+      order.paymentReference = session.payment_intent?.toString() || session.id;
+      await order.save();
     }
 
-    await consumeLoyaltyPoints(payload.userId, order, payload.loyaltyPointsUsed);
-
-    if (payload.discountCode) {
-      const freshUser = payload.discountCodeSource === 'private' ? await User.findById(payload.userId) : null;
-      await incrementDiscountCodeUsage({
-        settings,
-        user: freshUser,
-        code: payload.discountCode,
-        source: payload.discountCodeSource
-      });
-    }
-
-    const customer = await User.findById(payload.userId).select('name phone');
-
-    console.log('WhatsApp hook reached for verifyStripeCheckoutSession', {
-      orderId: String(order._id || ''),
-      customerId: String(payload.userId || ''),
-      paymentMethod: order.paymentMethod
-    });
-    const adminWhatsAppResult = await sendNewOrderWhatsAppNotification({
-      order,
-      customer,
-      shippingAddress: payload.shippingAddress
-    }).catch((error) => {
-      console.error('WhatsApp notification error', {
-        orderId: String(order._id || ''),
-        message: error.message
-      });
-      return { sent: false, reason: 'threw', message: error.message };
-    });
-    console.log('WhatsApp admin notification attempt finished', {
-      orderId: String(order._id || ''),
-      result: JSON.stringify(adminWhatsAppResult, null, 2)
-    });
-
-    const customerWhatsAppResult = await sendCustomerOrderWhatsAppNotification({
-      order,
-      customer,
-      shippingAddress: payload.shippingAddress,
-      clientUrl: payload.clientUrl
-    }).catch((error) => {
-      console.error('WhatsApp customer notification error', {
-        orderId: String(order._id || ''),
-        message: error.message
-      });
-      return { sent: false, reason: 'threw', message: error.message };
-    });
-    console.log('WhatsApp customer notification attempt finished', {
-      orderId: String(order._id || ''),
-      result: JSON.stringify(customerWhatsAppResult, null, 2)
-    });
+    return res.json({ paid: order.isPaid, order });
   }
 
-  const isOwner = order.user?.toString() === req.user._id.toString();
+  const rawPayload = req.query.payload ? Buffer.from(String(req.query.payload), 'base64url').toString('utf8') : '';
+  if (!rawPayload) {
+    return res.status(400).json({ message: 'لم تصل بيانات كافية للتحقق من عملية الدفع البنكية بعد' });
+  }
+
+  const payload = JSON.parse(rawPayload);
+  const isOwner = payload.userId === req.user._id.toString();
   if (!isOwner && req.user.role !== 'admin') {
     return res.status(403).json({ message: 'غير مصرح بهذه العملية' });
   }
 
-  if (!order.isPaid) {
-    order.isPaid = true;
-    order.paidAt = order.paidAt || new Date();
-    order.paymentProvider = settings.payment?.onlineProvider || 'stripe';
-    order.paymentSessionId = session.id;
-    order.paymentReference = session.payment_intent?.toString() || session.id;
-    await order.save();
+  let order = await Order.findOne({ paymentSessionId: reference });
+  if (!order) {
+    order = await finalizePaidOrder({
+      payload,
+      paymentSessionId: reference,
+      paymentReference: reference,
+      settings,
+      req
+    });
   }
 
-  res.json({
+  return res.json({
     paid: order.isPaid,
-    order
+    order,
+    pendingGatewaySetup: true,
+    message: 'تم تجهيز مسار التحقق العام. عند استلام مواصفات البنك النهائية سنستبدل هذا التحقق المؤقت بالتحقق المباشر مع البوابة.'
   });
 });
+
+export const createStripeCheckoutSession = createGatewayCheckoutSession;
+export const verifyStripeCheckoutSession = verifyGatewayCheckoutSession;

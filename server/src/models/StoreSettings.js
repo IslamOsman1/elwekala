@@ -121,7 +121,13 @@ const storeSettingsSchema = new mongoose.Schema({
     onlineProvider: { type: String, default: 'stripe' },
     currency: { type: String, default: 'egp' },
     stripePublishableKey: { type: String, default: '' },
-    stripeSecretKey: { type: String, default: '' }
+    stripeSecretKey: { type: String, default: '' },
+    gatewayMerchantId: { type: String, default: '' },
+    gatewayApiUsername: { type: String, default: '' },
+    gatewayApiPassword: { type: String, default: '' },
+    gatewayBaseUrl: { type: String, default: '' },
+    gatewayIntegrationMode: { type: String, default: 'hosted_checkout' },
+    gatewayWebhookSecret: { type: String, default: '' }
   },
   loyalty: {
     enabled: { type: Boolean, default: true },
