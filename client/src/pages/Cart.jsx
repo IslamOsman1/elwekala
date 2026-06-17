@@ -17,7 +17,7 @@ export default function Cart() {
           <div className="cart-list">
             {items.map((item) => (
               <div className="cart-item" key={item._id}>
-                {item.image?.url ? <img src={item.image.url} alt={item.name} /> : null}
+                {item.image?.url ? <img src={item.image.url} alt={item.name} loading="lazy" decoding="async" sizes="80px" /> : null}
                 <div>
                   <h3>{item.name}</h3>
                   <p>{item.price} ج.م</p>

@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { BrowserQRCodeReader } from '@zxing/browser';
 import { Camera, LayoutDashboard, Moon, Search, ShoppingCart, Sun, UserRound, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import Logo from './Logo.jsx';
@@ -92,15 +91,18 @@ export default function Header({ theme, onToggleTheme }) {
       qrReaderRef.current?.reset?.();
 
       if (!qrReaderRef.current) {
+        const { BrowserQRCodeReader } = await import('@zxing/browser');
         qrReaderRef.current = new BrowserQRCodeReader();
       }
+
+      const compactViewport = window.innerWidth <= 768;
 
       const controls = await qrReaderRef.current.decodeFromConstraints(
         {
           video: {
             facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
+            width: { ideal: compactViewport ? 960 : 1280 },
+            height: { ideal: compactViewport ? 540 : 720 }
           },
           audio: false
         },

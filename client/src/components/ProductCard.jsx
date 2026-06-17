@@ -18,7 +18,15 @@ export default function ProductCard({ product }) {
   return <article className="product-card">
     <Link to={`/product/${product._id}`} className="product-image">
       {product.isDeal && <span className="badge">عرض</span>}
-      {product.image?.url ? <img src={product.image.url} alt={product.name} /> : <div className="placeholder"><ShoppingBasket size={42} /><span>{product.category}</span></div>}
+      {product.image?.url ? (
+        <img
+          src={product.image.url}
+          alt={product.name}
+          loading="lazy"
+          decoding="async"
+          sizes="(max-width: 360px) 100vw, (max-width: 768px) 50vw, 228px"
+        />
+      ) : <div className="placeholder"><ShoppingBasket size={42} /><span>{product.category}</span></div>}
     </Link>
 
     <div className="product-body">

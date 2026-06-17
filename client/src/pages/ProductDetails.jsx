@@ -136,7 +136,16 @@ export default function ProductDetails() {
     <div className="container page">
       <div className="product-details">
         <div className="detail-image">
-          {product.image?.url ? <img src={product.image.url} alt={product.name} /> : <span>{product.category}</span>}
+          {product.image?.url ? (
+            <img
+              src={product.image.url}
+              alt={product.name}
+              loading="eager"
+              fetchPriority="high"
+              decoding="async"
+              sizes="(max-width: 768px) 100vw, 44vw"
+            />
+          ) : <span>{product.category}</span>}
         </div>
 
         <div className="detail-info">

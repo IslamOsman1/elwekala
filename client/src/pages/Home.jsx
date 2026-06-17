@@ -134,12 +134,20 @@ export default function Home() {
       <Link
         to={slide.link || '/offers'}
         className="promo-slide-frame"
-        style={slide.image ? { backgroundImage: `linear-gradient(180deg, rgba(9,9,9,.16), rgba(9,9,9,.56)), url(${slide.image})` } : undefined}
       >
+        {slide.image ? (
+          <img
+            src={slide.image}
+            alt={slide.title}
+            className="promo-slide-image"
+            loading="eager"
+            fetchPriority="high"
+            decoding="async"
+            sizes="(max-width: 480px) 100vw, (max-width: 768px) 92vw, 720px"
+          />
+        ) : null}
         <div className="promo-slide-overlay">
           <span className="promo-slide-tag">{slide.tag}</span>
-          <strong>{slide.title}</strong>
-          <small>{slide.note}</small>
         </div>
       </Link>
 

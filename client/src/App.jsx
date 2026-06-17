@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import AppSplash from './components/AppSplash.jsx';
 import Header from './components/Header.jsx';
@@ -6,34 +6,36 @@ import Footer from './components/Footer.jsx';
 import SiteNotificationPrompt from './components/SiteNotificationPrompt.jsx';
 import SupportChatWidget from './components/SupportChatWidget.jsx';
 import { ensurePushSubscription } from './utils/pushNotifications.js';
-import Home from './pages/Home.jsx';
-import CategoriesPage from './pages/CategoriesPage.jsx';
-import CategoryPage from './pages/CategoryPage.jsx';
-import OffersPage from './pages/OffersPage.jsx';
-import WishlistPage from './pages/WishlistPage.jsx';
-import ProductDetails from './pages/ProductDetails.jsx';
-import ProfilePage from './pages/ProfilePage.jsx';
-import SettingsPage from './pages/SettingsPage.jsx';
-import ContactPage from './pages/ContactPage.jsx';
-import AboutPage from './pages/AboutPage.jsx';
-import PoliciesPage from './pages/PoliciesPage.jsx';
-import PrivacyPolicyPage from './pages/PrivacyPolicyPage.jsx';
-import TermsPage from './pages/TermsPage.jsx';
-import ShippingPolicyPage from './pages/ShippingPolicyPage.jsx';
-import RefundPolicyPage from './pages/RefundPolicyPage.jsx';
-import AlWekalaProductsPage from './pages/AlWekalaProductsPage.jsx';
-import Cart from './pages/Cart.jsx';
-import Login from './pages/Login.jsx';
-import Register from './pages/Register.jsx';
-import CompletePasswordPage from './pages/CompletePasswordPage.jsx';
-import ForgotPasswordPage from './pages/ForgotPasswordPage.jsx';
-import Checkout from './pages/Checkout.jsx';
-import CheckoutReview from './pages/CheckoutReview.jsx';
-import CheckoutSuccess from './pages/CheckoutSuccess.jsx';
-import Orders from './pages/Orders.jsx';
-import AdminDashboard from './pages/AdminDashboard.jsx';
-import StorePurchasesPage from './pages/StorePurchasesPage.jsx';
 import { useAuth } from './context/AuthContext.jsx';
+
+import Home from './pages/Home.jsx';
+
+const CategoriesPage = lazy(() => import('./pages/CategoriesPage.jsx'));
+const CategoryPage = lazy(() => import('./pages/CategoryPage.jsx'));
+const OffersPage = lazy(() => import('./pages/OffersPage.jsx'));
+const WishlistPage = lazy(() => import('./pages/WishlistPage.jsx'));
+const ProductDetails = lazy(() => import('./pages/ProductDetails.jsx'));
+const ProfilePage = lazy(() => import('./pages/ProfilePage.jsx'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage.jsx'));
+const ContactPage = lazy(() => import('./pages/ContactPage.jsx'));
+const AboutPage = lazy(() => import('./pages/AboutPage.jsx'));
+const PoliciesPage = lazy(() => import('./pages/PoliciesPage.jsx'));
+const PrivacyPolicyPage = lazy(() => import('./pages/PrivacyPolicyPage.jsx'));
+const TermsPage = lazy(() => import('./pages/TermsPage.jsx'));
+const ShippingPolicyPage = lazy(() => import('./pages/ShippingPolicyPage.jsx'));
+const RefundPolicyPage = lazy(() => import('./pages/RefundPolicyPage.jsx'));
+const AlWekalaProductsPage = lazy(() => import('./pages/AlWekalaProductsPage.jsx'));
+const Cart = lazy(() => import('./pages/Cart.jsx'));
+const Login = lazy(() => import('./pages/Login.jsx'));
+const Register = lazy(() => import('./pages/Register.jsx'));
+const CompletePasswordPage = lazy(() => import('./pages/CompletePasswordPage.jsx'));
+const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage.jsx'));
+const Checkout = lazy(() => import('./pages/Checkout.jsx'));
+const CheckoutReview = lazy(() => import('./pages/CheckoutReview.jsx'));
+const CheckoutSuccess = lazy(() => import('./pages/CheckoutSuccess.jsx'));
+const Orders = lazy(() => import('./pages/Orders.jsx'));
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard.jsx'));
+const StorePurchasesPage = lazy(() => import('./pages/StorePurchasesPage.jsx'));
 
 function PrivateRoute({ children, adminOnly = false }) {
   const { user } = useAuth();
@@ -51,6 +53,8 @@ export default function App() {
   const [routeSplashVisible, setRouteSplashVisible] = useState(false);
   const firstPathRef = useRef(location.pathname);
   const requiresPasswordSetup = Boolean(user && !user.hasManualPassword);
+  const prefersReducedMotion = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const isCompactViewport = typeof window !== 'undefined' && window.innerWidth <= 768;
 
   useEffect(() => {
     document.body.dataset.theme = theme;
@@ -58,24 +62,29 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setBootSplashVisible(false), 1500);
+    const timer = window.setTimeout(() => setBootSplashVisible(false), prefersReducedMotion || isCompactViewport ? 480 : 900);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [isCompactViewport, prefersReducedMotion]);
 
   useEffect(() => {
     if (firstPathRef.current === location.pathname) return;
+    if (prefersReducedMotion || isCompactViewport) {
+      setRouteSplashVisible(false);
+      return undefined;
+    }
+
     setRouteSplashVisible(true);
-    const timer = window.setTimeout(() => setRouteSplashVisible(false), 420);
+    const timer = window.setTimeout(() => setRouteSplashVisible(false), 180);
     return () => window.clearTimeout(timer);
-  }, [location.pathname]);
+  }, [isCompactViewport, location.pathname, prefersReducedMotion]);
 
   useEffect(() => {
     firstPathRef.current = location.pathname;
   }, [location.pathname]);
 
   useEffect(() => {
-    window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
-  }, [location.pathname]);
+    window.scrollTo({ top: 0, left: 0, behavior: prefersReducedMotion || isCompactViewport ? 'auto' : 'smooth' });
+  }, [isCompactViewport, location.pathname, prefersReducedMotion]);
 
   useEffect(() => {
     if (!user || typeof window === 'undefined' || !('Notification' in window)) return;
@@ -91,7 +100,8 @@ export default function App() {
     />
     <SiteNotificationPrompt />
     <main className={`app-main-shell${routeSplashVisible ? ' is-transitioning' : ''}`}>
-      <Routes>
+      <Suspense fallback={<div className="route-content-fallback" aria-hidden="true" />}>
+        <Routes>
         {requiresPasswordSetup
           ? <>
             <Route path="/complete-password" element={<CompletePasswordPage />} />
@@ -125,7 +135,8 @@ export default function App() {
         <Route path="/admin" element={<PrivateRoute adminOnly><AdminDashboard /></PrivateRoute>} />
         <Route path="/admin/store-purchases" element={<PrivateRoute adminOnly><StorePurchasesPage /></PrivateRoute>} />
           </>}
-      </Routes>
+        </Routes>
+      </Suspense>
     </main>
     <SupportChatWidget />
     <Footer />
